@@ -15,7 +15,7 @@ import {
 // Leave blank for now — after you sign up, check the browser console
 // for "Your UID:" and paste it here, then redeploy.
 // ============================================================
-const PARENT_UID = ""; // e.g. "abc123xyz" — fill in after first login
+const PARENT_UID = "jELz4gid8PQ8GipfvGkWgRSDNRm2"; // e.g. "abc123xyz" — fill in after first login
 
 // ============================================================
 // CONFIGURATION
