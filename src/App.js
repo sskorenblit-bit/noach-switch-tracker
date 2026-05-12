@@ -11,11 +11,9 @@ import {
 } from "firebase/firestore";
 
 // ============================================================
-// WHO IS THE PARENT? Set your Firebase UID here after first login.
-// Leave blank for now — after you sign up, check the browser console
-// for "Your UID:" and paste it here, then redeploy.
+// PARENT UID
 // ============================================================
-const PARENT_UID = "jELz4gid8PQ8GipfvGkWgRSDNRm2"; // e.g. "abc123xyz" — fill in after first login
+const PARENT_UID = "jELz4gid8PQ8GipfvGkWgRSDNRm2";
 
 // ============================================================
 // CONFIGURATION
@@ -63,6 +61,40 @@ const BEDTIME_OPTIONS = {
   none:    { label: "No bedtime bonus",      amount: 0.00 },
 };
 
+// Self control intensity options
+const SELF_CONTROL_OPTIONS = [
+  { amount: 0.50, label: "A little 💪",       desc: "Small win" },
+  { amount: 1.00, label: "Pretty hard 😤",     desc: "Real effort" },
+  { amount: 2.00, label: "Really hard 🔥",     desc: "Major effort" },
+  { amount: 3.00, label: "MAJOR willpower 👑", desc: "Heroic resistance" },
+];
+
+// Math homework bonus tiers
+const MATH_HW_OPTIONS = [
+  { amount: 2.00, label: "Done before 8 PM ⏰", key: "before8" },
+  { amount: 1.00, label: "Done before 9 PM",    key: "before9" },
+];
+
+// All possible periods for self-control dropdown
+const ALL_PERIODS = [
+  { key: "jewishClass1", label: "Jewish Class 1" },
+  { key: "break",        label: "Break" },
+  { key: "jewishClass2", label: "Jewish Class 2" },
+  { key: "recess1",      label: "Morning Recess" },
+  { key: "jewishClass3", label: "Jewish Class 3" },
+  { key: "lunch",        label: "Lunch" },
+  { key: "mincha",       label: "Mincha" },
+  { key: "secClass1",    label: "Afternoon Class 1" },
+  { key: "secClass2",    label: "Afternoon Class 2" },
+  { key: "recess2",      label: "Afternoon Recess" },
+  { key: "secClass3",    label: "Afternoon Class 3" },
+  { key: "secClass4",    label: "Math (Mr. Berger)" },
+  { key: "secClass5",    label: "Afternoon Class 5" },
+  { key: "homework",     label: "Homework time" },
+  { key: "athome",       label: "At home" },
+  { key: "other",        label: "Other moment" },
+];
+
 const STREAK_DEFS = {
   jewishClass1: { label: "Rodkin Rising",      emoji: "📕", color: "#ff6b9d", tier: "hard", desc: "Jewish Class 1",
     milestones: [{n:3,bonus:1,badge:"🥉",secretName:"Early Bird"},{n:5,bonus:2,badge:"🥈",secretName:"Morning Mode"},{n:10,bonus:5,badge:"🏆",secretName:"Class Act"}] },
@@ -87,6 +119,28 @@ const STREAK_DEFS = {
 const HAT_TRICK_DEF = {
   label: "Rodkin Hat Trick", emoji: "👑", color: "#c084fc", desc: "All 3 Jewish periods 😄/😐 same day",
   milestones: [{n:3,bonus:2,badge:"🥉",secretName:"Triple Threat"},{n:7,bonus:4,badge:"🥈",secretName:"Morning Maestro"},{n:15,bonus:8,badge:"🏆",secretName:"Rodkin Legend"}],
+};
+
+// Self Control collection (any logged self-control bonuses)
+const SELF_CONTROL_DEF = {
+  label: "Self Control Master", emoji: "🎯", color: "#10b981",
+  desc: "All your self-control wins",
+  milestones: [
+    {n:5,  bonus:1, badge:"🥉", secretName:"Self Aware"},
+    {n:15, bonus:3, badge:"🥈", secretName:"Steady Hand"},
+    {n:30, bonus:5, badge:"🏆", secretName:"Master of Self"},
+  ],
+};
+
+// Major Willpower collection (only $3 self-control logs)
+const MAJOR_WILLPOWER_DEF = {
+  label: "Major Willpower", emoji: "👑", color: "#a855f7",
+  desc: "Your biggest self-control wins",
+  milestones: [
+    {n:3,  bonus:3,  badge:"🥉", secretName:"Iron Will"},
+    {n:7,  bonus:7,  badge:"🥈", secretName:"Titan"},
+    {n:15, bonus:15, badge:"🏆", secretName:"Legendary Self-Control"},
+  ],
 };
 
 // ============================================================
@@ -127,6 +181,15 @@ const isPastOrToday = iso => iso <= getTodayIso();
 const loggableSchoolDays = () => SCHOOL_DAYS.filter(d=>isPastOrToday(d.date));
 const loggableBedtimeNights = () => BEDTIME_NIGHTS.filter(iso=>isPastOrToday(iso));
 
+// EDIT 4: School countdown — count remaining days
+function getSchoolCountdown() {
+  const today = getTodayIso();
+  const remaining = SCHOOL_DAYS.filter(d => d.date >= today);
+  const fullDays = remaining.filter(d => d.type === "full").length;
+  const hebrewDays = remaining.filter(d => d.type === "hebrew").length;
+  return { fullDays, hebrewDays, total: fullDays + hebrewDays };
+}
+
 const diffColor = n => n<=1?"#4ade80":n===2?"#facc15":n===3?"#fb923c":"#f87171";
 const diffStars = n => "★".repeat(n)+"☆".repeat(4-n);
 const calcEarning = (base,rk) => rk?parseFloat((base*(RATINGS[rk]?.multiplier||0)).toFixed(2)):0;
@@ -166,12 +229,25 @@ function getNewMilestones(key,oldC,newC,def) {
   return def.milestones.filter(m=>oldC<m.n&&newC>=m.n);
 }
 
+// Count self-control bonuses
+function countSelfControl(bonuses) {
+  return bonuses.filter(b => b.type === "selfControl").length;
+}
+function countMajorWillpower(bonuses) {
+  return bonuses.filter(b => b.type === "selfControl" && b.amount === 3.00).length;
+}
+function countMathHwToday(bonuses) {
+  const today = getTodayIso();
+  return bonuses.filter(b => b.type === "mathHw" && b.date === today).length;
+}
+function countSelfControlToday(bonuses) {
+  const today = getTodayIso();
+  return bonuses.filter(b => b.type === "selfControl" && b.date === today).length;
+}
+
 // ============================================================
 // FIRESTORE HELPERS
 // ============================================================
-// We store all data under /trackerData/{NOACH_UID}/
-// Parent reads same UID via real-time listener
-
 async function saveToFirestore(uid, key, value) {
   try {
     await setDoc(doc(db, "trackerData", uid, "data", key), { value: JSON.stringify(value) }, { merge: true });
@@ -187,17 +263,14 @@ export default function App() {
   const [isParent,    setIsParent]    = useState(false);
   const [noachUID,    setNoachUID]    = useState(null);
 
-  // Listen for auth state
   useEffect(()=>{
     return onAuthStateChanged(auth, user=>{
       setAuthUser(user);
       setAuthLoading(false);
       if(user) {
-        console.log("Your UID:", user.uid); // For setting PARENT_UID
+        console.log("Your UID:", user.uid);
         const parentIsLoggedIn = PARENT_UID && user.uid === PARENT_UID;
         setIsParent(parentIsLoggedIn);
-        // If parent, watch Noach's data. If Noach, watch own data.
-        // For now noachUID is either self (if Noach) or the stored Noach UID
         if(!parentIsLoggedIn) setNoachUID(user.uid);
       }
     });
@@ -205,11 +278,7 @@ export default function App() {
 
   if(authLoading) return <LoadingScreen/>;
   if(!authUser)   return <AuthScreen/>;
-
-  // Parent watching Noach's data — needs Noach's UID stored
   if(isParent) return <ParentLiveView parentUser={authUser}/>;
-
-  // Noach's view
   return <TrackerApp user={authUser} isParent={false}/>;
 }
 
@@ -230,7 +299,7 @@ function LoadingScreen() {
 // AUTH SCREEN
 // ============================================================
 function AuthScreen() {
-  const [mode,     setMode]     = useState("login"); // login | signup
+  const [mode,     setMode]     = useState("login");
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [error,    setError]    = useState("");
@@ -266,7 +335,6 @@ function AuthScreen() {
               </button>
             ))}
           </div>
-
           <form onSubmit={handleSubmit} style={{display:"flex",flexDirection:"column",gap:12}}>
             <input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required
               style={{padding:"12px 16px",borderRadius:12,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:15,fontFamily:"'Nunito',sans-serif",fontWeight:700}}/>
@@ -277,13 +345,40 @@ function AuthScreen() {
               {loading?"...":(mode==="login"?"Let's Go! 🚀":"Create Account 🎮")}
             </button>
           </form>
-
           <p style={{fontSize:11,opacity:.4,marginTop:16,fontWeight:700,lineHeight:1.5}}>
             Noach uses one account. Mom uses a separate account.<br/>After signing up, check the browser console for your UID.
           </p>
         </div>
       </div>
       <style>{`@keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}`}</style>
+    </div>
+  );
+}
+
+// ============================================================
+// SCHOOL COUNTDOWN COMPONENT (EDIT 4)
+// ============================================================
+function SchoolCountdown() {
+  const { fullDays, hebrewDays, total } = getSchoolCountdown();
+  if (total === 0) return (
+    <div style={{background:"linear-gradient(135deg,rgba(107,203,119,.2),rgba(77,150,255,.1))",border:"1px solid rgba(107,203,119,.35)",borderRadius:14,padding:"12px 16px",marginBottom:14,textAlign:"center"}}>
+      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:18,color:"#6bcb77"}}>🎓 School's out!</div>
+      <div style={{fontSize:11,opacity:.6,fontWeight:700,marginTop:3}}>Summer time!</div>
+    </div>
+  );
+  return (
+    <div style={{background:"linear-gradient(135deg,rgba(255,217,61,.12),rgba(192,132,252,.08))",border:"1px solid rgba(255,217,61,.25)",borderRadius:14,padding:"12px 14px",marginBottom:14}}>
+      <div style={{fontSize:11,opacity:.6,fontWeight:900,marginBottom:8,letterSpacing:.5,textAlign:"center"}}>📅 SCHOOL COUNTDOWN</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div style={{background:"rgba(255,255,255,.05)",borderRadius:10,padding:"8px 6px",textAlign:"center"}}>
+          <div style={{fontFamily:"'Fredoka One',cursive",fontSize:26,color:"#ffd93d",lineHeight:1}}>{fullDays}</div>
+          <div style={{fontSize:10,opacity:.6,fontWeight:800,marginTop:3}}>FULL DAYS</div>
+        </div>
+        <div style={{background:"rgba(255,255,255,.05)",borderRadius:10,padding:"8px 6px",textAlign:"center"}}>
+          <div style={{fontFamily:"'Fredoka One',cursive",fontSize:26,color:"#c084fc",lineHeight:1}}>{hebrewDays}</div>
+          <div style={{fontSize:10,opacity:.6,fontWeight:800,marginTop:3}}>HEBREW DAYS</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -303,7 +398,6 @@ function ParentLiveView({parentUser}) {
 
   useEffect(()=>{
     if(!noachUID) return;
-    // Real-time listener on Noach's data
     const unsubs=[];
     const keys=[
       {key:"schoolLogs",  setter:setSchoolLogs},
@@ -358,8 +452,6 @@ function ParentLiveView({parentUser}) {
     <div style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d0b1e 0%,#1a1040 50%,#0d1f3c 100%)",fontFamily:"'Nunito',sans-serif",color:"#fff",overflowX:"hidden"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;800;900&display=swap'); *{box-sizing:border-box} body{margin:0} .tap{cursor:pointer;border:none;background:none;outline:none;transition:opacity .15s;} .tap:active{opacity:.7}`}</style>
       <div style={{maxWidth:500,margin:"0 auto",padding:"20px 16px 40px"}}>
-
-        {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <div>
             <div style={{fontFamily:"'Fredoka One',cursive",fontSize:22}}>👩 Parent Dashboard</div>
@@ -370,7 +462,9 @@ function ParentLiveView({parentUser}) {
           <button className="tap" onClick={()=>signOut(auth)} style={{fontSize:12,fontWeight:800,opacity:.5,color:"#fff",padding:"6px 10px",borderRadius:10,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)"}}>Sign Out</button>
         </div>
 
-        {/* Grand total + split */}
+        {/* EDIT 4: School countdown on parent view */}
+        <SchoolCountdown/>
+
         <div style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:20,padding:20,marginBottom:14}}>
           <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:4,letterSpacing:.5}}>GRAND TOTAL</div>
           <div style={{fontFamily:"'Fredoka One',cursive",fontSize:44,color:"#ffd93d",marginBottom:12}}>${totalEarned.toFixed(2)}</div>
@@ -392,7 +486,6 @@ function ParentLiveView({parentUser}) {
           <div style={{marginTop:10,fontSize:11,opacity:.4,fontWeight:800}}>Remaining: ${remaining.toFixed(2)}</div>
         </div>
 
-        {/* Behavior */}
         {totalRated>0&&(
           <div style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:14,marginBottom:14}}>
             <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:10,letterSpacing:.5}}>BEHAVIOR BREAKDOWN</div>
@@ -408,7 +501,6 @@ function ParentLiveView({parentUser}) {
           </div>
         )}
 
-        {/* Active streaks */}
         {Object.entries(streaks).some(([,s])=>s.current>0)&&(
           <div style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:14,marginBottom:14}}>
             <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:10,letterSpacing:.5}}>🔥 ACTIVE STREAKS</div>
@@ -434,7 +526,6 @@ function ParentLiveView({parentUser}) {
           </div>
         )}
 
-        {/* School logs */}
         {schoolDays.length>0&&(
           <div style={{marginBottom:14}}>
             <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:8,letterSpacing:.5}}>SCHOOL LOGS</div>
@@ -469,7 +560,6 @@ function ParentLiveView({parentUser}) {
           </div>
         )}
 
-        {/* Bedtime logs */}
         {bedNights.length>0&&(
           <div style={{marginBottom:14}}>
             <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:8,letterSpacing:.5}}>BEDTIME LOGS</div>
@@ -488,7 +578,22 @@ function ParentLiveView({parentUser}) {
           </div>
         )}
 
-        {/* Badge album preview */}
+        {bonuses.length>0&&(
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:8,letterSpacing:.5}}>BONUSES LOG</div>
+            {[...bonuses].reverse().map(b=>(
+              <div key={b.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,padding:"10px 14px",marginBottom:7}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontWeight:800,fontSize:13}}>{b.label}</div>
+                  <div style={{fontFamily:"'Fredoka One',cursive",fontSize:15,color:"#fbbf24"}}>${b.amount.toFixed(2)}</div>
+                </div>
+                {b.description&&<div style={{fontSize:11,opacity:.6,marginTop:4,fontStyle:"italic"}}>"{b.description}"</div>}
+                {b.date&&<div style={{fontSize:10,opacity:.4,fontWeight:700,marginTop:3}}>{formatDate(b.date)}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+
         {badgeAlbum.length>0&&(
           <div style={{marginBottom:14}}>
             <div style={{fontSize:10,opacity:.5,fontWeight:900,marginBottom:10,letterSpacing:.5}}>🎖️ BADGES EARNED ({badgeAlbum.length})</div>
@@ -508,7 +613,7 @@ function ParentLiveView({parentUser}) {
 }
 
 // ============================================================
-// TRACKER APP (Noach's view) — full app with tabs
+// TRACKER APP (Noach's view)
 // ============================================================
 function TrackerApp({user}) {
   const [tab,          setTab]          = useState("home");
@@ -522,7 +627,6 @@ function TrackerApp({user}) {
 
   const uid = user.uid;
 
-  // Load from Firestore on mount
   useEffect(()=>{
     async function load() {
       const keys = ["schoolLogs","bedtimeLogs","bonuses","streakBonuses","badgeAlbum"];
@@ -553,6 +657,34 @@ function TrackerApp({user}) {
     else if(newlyHit) setCelebration({type:"milestone",milestone:newlyHit});
     else setCelebration({type:"day"});
     setTimeout(()=>setCelebration(null),3800);
+  }
+
+  function checkSelfControlMilestones(currentBonuses, newBonus) {
+    const newAlbumEntries = [];
+    const newStreakBonusEntries = [];
+    let rewardTotal = 0;
+
+    if (newBonus.type === "selfControl") {
+      const oldSC = countSelfControl(currentBonuses);
+      const newSC = oldSC + 1;
+      getNewMilestones("selfControl", oldSC, newSC, SELF_CONTROL_DEF).forEach(m=>{
+        newStreakBonusEntries.push({id:Date.now()+Math.random(),label:`${SELF_CONTROL_DEF.emoji} ${SELF_CONTROL_DEF.label} — ${m.n} wins! ${m.badge}`,amount:m.bonus,date:newBonus.date,type:"selfControlMilestone"});
+        newAlbumEntries.push({id:`selfControl-${m.n}`,streakKey:"selfControl",milestoneN:m.n,secretName:m.secretName,badge:m.badge,emoji:SELF_CONTROL_DEF.emoji,streakLabel:SELF_CONTROL_DEF.label,color:SELF_CONTROL_DEF.color,dateEarned:newBonus.date,bonus:m.bonus});
+        rewardTotal += m.bonus;
+      });
+
+      if (newBonus.amount === 3.00) {
+        const oldMW = countMajorWillpower(currentBonuses);
+        const newMW = oldMW + 1;
+        getNewMilestones("majorWillpower", oldMW, newMW, MAJOR_WILLPOWER_DEF).forEach(m=>{
+          newStreakBonusEntries.push({id:Date.now()+Math.random()+1,label:`${MAJOR_WILLPOWER_DEF.emoji} ${MAJOR_WILLPOWER_DEF.label} — ${m.n} majors! ${m.badge}`,amount:m.bonus,date:newBonus.date,type:"majorWillpowerMilestone"});
+          newAlbumEntries.push({id:`majorWillpower-${m.n}`,streakKey:"majorWillpower",milestoneN:m.n,secretName:m.secretName,badge:m.badge,emoji:MAJOR_WILLPOWER_DEF.emoji,streakLabel:MAJOR_WILLPOWER_DEF.label,color:MAJOR_WILLPOWER_DEF.color,dateEarned:newBonus.date,bonus:m.bonus});
+          rewardTotal += m.bonus;
+        });
+      }
+    }
+
+    return { newAlbumEntries, newStreakBonusEntries, rewardTotal };
   }
 
   async function saveSchoolLog(date,log) {
@@ -601,15 +733,38 @@ function TrackerApp({user}) {
     const newBL={...bedtimeLogs,[date]:log};
     setBedtimeLogs(newBL);
     await saveToFirestore(uid,"bedtimeLogs",newBL);
-    fireCelebration(parseFloat((schoolTotal+bedtimeTotal+bonusTotal+streakBonusTotal+(log.amount||0)-(bedtimeLogs[date]?.amount||0)).toFixed(2)),old,null);
+    // EDIT 3: Don't celebrate if no bedtime bonus earned ($0)
+    if (log.amount > 0) {
+      fireCelebration(parseFloat((schoolTotal+bedtimeTotal+bonusTotal+streakBonusTotal+(log.amount||0)-(bedtimeLogs[date]?.amount||0)).toFixed(2)),old,null);
+    }
   }
 
   async function addBonus(bonus){
     const old=totalEarned;
-    const newB=[...bonuses,{...bonus,id:Date.now()}];
+    const newBonusEntry = {...bonus,id:Date.now()};
+    const newB=[...bonuses, newBonusEntry];
+
+    const { newAlbumEntries, newStreakBonusEntries, rewardTotal } = checkSelfControlMilestones(bonuses, newBonusEntry);
+
     setBonuses(newB);
     await saveToFirestore(uid,"bonuses",newB);
-    fireCelebration(parseFloat((totalEarned+bonus.amount).toFixed(2)),old,null);
+
+    if (newStreakBonusEntries.length > 0) {
+      const newSB = [...streakBonuses, ...newStreakBonusEntries];
+      setStreakBonuses(newSB);
+      await saveToFirestore(uid,"streakBonuses",newSB);
+
+      const existingIds = new Set(badgeAlbum.map(b=>b.id));
+      const newBA = [...badgeAlbum, ...newAlbumEntries.filter(b=>!existingIds.has(b.id))];
+      setBadgeAlbum(newBA);
+      await saveToFirestore(uid,"badgeAlbum",newBA);
+
+      const firstNew = newStreakBonusEntries[0];
+      const celebEntry = newAlbumEntries[0];
+      fireCelebration(parseFloat((old+bonus.amount+rewardTotal).toFixed(2)),old,{label:firstNew.label,emoji:celebEntry?.emoji||"🎯",amount:firstNew.amount,secretName:celebEntry?.secretName});
+    } else {
+      fireCelebration(parseFloat((totalEarned+bonus.amount).toFixed(2)),old,null);
+    }
   }
 
   if(!loaded) return <LoadingScreen/>;
@@ -624,51 +779,37 @@ function TrackerApp({user}) {
 
   return(
     <div style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d0b1e 0%,#1a1040 50%,#0d1f3c 100%)",fontFamily:"'Nunito',sans-serif",color:"#fff",overflowX:"hidden"}}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800;900&display=swap');
-        *{box-sizing:border-box} body{margin:0}
-        .tap{cursor:pointer;transition:transform .14s,opacity .14s;user-select:none;border:none;outline:none;background:none}
-        .tap:active{transform:scale(.95);opacity:.8}
-        .rbtn{transition:transform .12s,box-shadow .14s;cursor:pointer;border:none;outline:none}
-        .rbtn:hover{transform:scale(1.07)} .rbtn.sel{transform:scale(1.13)}
-        textarea{resize:none;font-family:'Nunito',sans-serif;}
-        @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-11px)}}
-        @keyframes shimmer{0%{background-position:200% center}100%{background-position:-200% center}}
-        @keyframes fall{0%{transform:translateY(-30px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(800deg);opacity:0}}
-        @keyframes pop{0%{transform:scale(0);opacity:0}65%{transform:scale(1.2)}100%{transform:scale(1);opacity:1}}
-        @keyframes blink{0%,100%{opacity:.9}50%{opacity:.35}}
-        @keyframes up{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
-        @keyframes badgePop{0%{transform:scale(0) rotate(-20deg);opacity:0}70%{transform:scale(1.25) rotate(5deg)}100%{transform:scale(1) rotate(0deg);opacity:1}}
-        @keyframes streakPop{0%{transform:scale(0) rotate(-10deg);opacity:0}60%{transform:scale(1.3) rotate(5deg)}100%{transform:scale(1) rotate(0deg);opacity:1}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-      `}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800;900&display=swap'); *{box-sizing:border-box} body{margin:0} .tap{cursor:pointer;transition:transform .14s,opacity .14s;user-select:none;border:none;outline:none;background:none} .tap:active{transform:scale(.95);opacity:.8} .rbtn{transition:transform .12s,box-shadow .14s;cursor:pointer;border:none;outline:none} .rbtn:hover{transform:scale(1.07)} .rbtn.sel{transform:scale(1.13)} textarea{resize:none;font-family:'Nunito',sans-serif;} @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-11px)}} @keyframes shimmer{0%{background-position:200% center}100%{background-position:-200% center}} @keyframes fall{0%{transform:translateY(-30px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(800deg);opacity:0}} @keyframes pop{0%{transform:scale(0);opacity:0}65%{transform:scale(1.2)}100%{transform:scale(1);opacity:1}} @keyframes blink{0%,100%{opacity:.9}50%{opacity:.35}} @keyframes up{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}} @keyframes badgePop{0%{transform:scale(0) rotate(-20deg);opacity:0}70%{transform:scale(1.25) rotate(5deg)}100%{transform:scale(1) rotate(0deg);opacity:1}} @keyframes streakPop{0%{transform:scale(0) rotate(-10deg);opacity:0}60%{transform:scale(1.3) rotate(5deg)}100%{transform:scale(1) rotate(0deg);opacity:1}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {[...Array(20)].map((_,i)=>(
         <div key={i} style={{position:"fixed",borderRadius:"50%",width:i%4===0?5:2,height:i%4===0?5:2,background:"#fff",opacity:.06+(i%5)*.04,top:`${(i*47)%100}%`,left:`${(i*73)%100}%`,animation:`blink ${2+(i%4)}s ease-in-out infinite`,animationDelay:`${i*.2}s`,pointerEvents:"none"}}/>
       ))}
 
+      {/* EDIT 2: Centered celebration popups via flexbox */}
       {celebration&&(
-        <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:999}}>
+        <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
           {[...Array(44)].map((_,i)=>(
-            <div key={i} style={{position:"absolute",width:i%3===0?13:8,height:i%3===0?13:8,borderRadius:i%2===0?"50%":3,background:["#ff6b6b","#ffd93d","#6bcb77","#4d96ff","#ff6bff","#fff"][i%6],left:`${4+(i*7.1)%92}%`,animation:`fall ${1.1+(i%9)*.18}s ease-in forwards`,animationDelay:`${(i%14)*.07}s`}}/>
+            <div key={i} style={{position:"absolute",width:i%3===0?13:8,height:i%3===0?13:8,borderRadius:i%2===0?"50%":3,background:["#ff6b6b","#ffd93d","#6bcb77","#4d96ff","#ff6bff","#fff"][i%6],left:`${4+(i*7.1)%92}%`,top:0,animation:`fall ${1.1+(i%9)*.18}s ease-in forwards`,animationDelay:`${(i%14)*.07}s`}}/>
           ))}
-          {celebration.type==="streak"?(
-            <>
-              <div style={{position:"absolute",top:"25%",left:"50%",transform:"translate(-50%,-50%)",fontSize:76,animation:"streakPop .6s cubic-bezier(.34,1.56,.64,1)"}}>{celebration.emoji}</div>
-              {celebration.secretName&&<div style={{position:"absolute",top:"40%",left:"50%",transform:"translate(-50%,-50%)",fontFamily:"'Fredoka One',cursive",fontSize:26,color:"#ffd93d",textShadow:"0 0 30px rgba(255,217,61,.9)",whiteSpace:"nowrap",animation:"pop .5s cubic-bezier(.34,1.56,.64,1) .15s both",textAlign:"center"}}>🏅 "{celebration.secretName}"</div>}
-              <div style={{position:"absolute",top:celebration.secretName?"55%":"46%",left:"50%",transform:"translate(-50%,-50%)",fontFamily:"'Fredoka One',cursive",fontSize:26,color:"#6bcb77",animation:"pop .5s cubic-bezier(.34,1.56,.64,1) .3s both"}}>+${celebration.amount?.toFixed(2)} 💰</div>
-            </>
-          ):celebration.type==="milestone"?(
-            <>
-              <div style={{position:"absolute",top:"30%",left:"50%",transform:"translate(-50%,-50%)",fontSize:80,animation:"badgePop .6s cubic-bezier(.34,1.56,.64,1)"}}>{celebration.milestone.emoji}</div>
-              <div style={{position:"absolute",top:"46%",left:"50%",transform:"translate(-50%,-50%)",fontFamily:"'Fredoka One',cursive",fontSize:28,color:celebration.milestone.color,textShadow:`0 0 30px ${celebration.milestone.color}`,whiteSpace:"nowrap",animation:"pop .5s cubic-bezier(.34,1.56,.64,1) .2s both"}}>{celebration.milestone.label}</div>
-            </>
-          ):(
-            <>
-              <div style={{position:"absolute",top:"37%",left:"50%",transform:"translate(-50%,-50%)",fontSize:74,animation:"pop .48s cubic-bezier(.34,1.56,.64,1)"}}>🎉</div>
-              <div style={{position:"absolute",top:"51%",left:"50%",transform:"translate(-50%,-50%)",fontFamily:"'Fredoka One',cursive",fontSize:27,color:"#ffd93d",textShadow:"0 0 30px rgba(255,217,61,.9)",whiteSpace:"nowrap",animation:"pop .48s cubic-bezier(.34,1.56,.64,1) .2s both"}}>AWESOME JOB NOACH! 🔥</div>
-            </>
-          )}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:20,maxWidth:"90vw"}}>
+            {celebration.type==="streak"?(
+              <>
+                <div style={{fontSize:76,animation:"streakPop .6s cubic-bezier(.34,1.56,.64,1)",marginBottom:8}}>{celebration.emoji}</div>
+                {celebration.secretName&&<div style={{fontFamily:"'Fredoka One',cursive",fontSize:26,color:"#ffd93d",textShadow:"0 0 30px rgba(255,217,61,.9)",animation:"pop .5s cubic-bezier(.34,1.56,.64,1) .15s both",marginBottom:8}}>🏅 "{celebration.secretName}"</div>}
+                <div style={{fontFamily:"'Fredoka One',cursive",fontSize:26,color:"#6bcb77",animation:"pop .5s cubic-bezier(.34,1.56,.64,1) .3s both"}}>+${celebration.amount?.toFixed(2)} 💰</div>
+              </>
+            ):celebration.type==="milestone"?(
+              <>
+                <div style={{fontSize:80,animation:"badgePop .6s cubic-bezier(.34,1.56,.64,1)",marginBottom:12}}>{celebration.milestone.emoji}</div>
+                <div style={{fontFamily:"'Fredoka One',cursive",fontSize:28,color:celebration.milestone.color,textShadow:`0 0 30px ${celebration.milestone.color}`,animation:"pop .5s cubic-bezier(.34,1.56,.64,1) .2s both"}}>{celebration.milestone.label}</div>
+              </>
+            ):(
+              <>
+                <div style={{fontSize:74,animation:"pop .48s cubic-bezier(.34,1.56,.64,1)",marginBottom:10}}>🎉</div>
+                <div style={{fontFamily:"'Fredoka One',cursive",fontSize:27,color:"#ffd93d",textShadow:"0 0 30px rgba(255,217,61,.9)",animation:"pop .48s cubic-bezier(.34,1.56,.64,1) .2s both"}}>AWESOME JOB NOACH! 🔥</div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -677,7 +818,7 @@ function TrackerApp({user}) {
         {tab==="school"  && <SchoolTab schoolLogs={schoolLogs} onSave={saveSchoolLog}/>}
         {tab==="bed"     && <BedtimeTab bedtimeLogs={bedtimeLogs} onSave={saveBedtimeLog}/>}
         {tab==="tests"   && <BonusTab bonuses={bonuses} onAdd={addBonus}/>}
-        {tab==="trophies"&& <TrophiesTab streaks={streaks} hatTrickCount={hatTrickCount} hatTrickDays={hatTrickDays} streakBonuses={streakBonuses} schoolLogs={schoolLogs} badgeAlbum={badgeAlbum}/>}
+        {tab==="trophies"&& <TrophiesTab streaks={streaks} hatTrickCount={hatTrickCount} hatTrickDays={hatTrickDays} streakBonuses={streakBonuses} schoolLogs={schoolLogs} badgeAlbum={badgeAlbum} bonuses={bonuses}/>}
       </div>
 
       <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(13,11,30,.95)",backdropFilter:"blur(16px)",borderTop:"1px solid rgba(255,255,255,.1)",display:"flex",justifyContent:"space-around",padding:"8px 0 12px",zIndex:100}}>
@@ -705,7 +846,6 @@ function HomeTab({totalEarned,progress,earnedBadges,schoolLogs,bedtimeLogs,schoo
   const todayIso=getTodayIso();
   const todaySchool=getSchoolDay(todayIso);
   const todaySchoolLogged=!!schoolLogs[todayIso];
-  const todayBedLogged=!!bedtimeLogs[todayIso];
   const unloggedSchool=loggableSchoolDays().filter(d=>d.date!==todayIso&&!schoolLogs[d.date]).length;
   const topStreaks=Object.entries(STREAK_DEFS).map(([k,def])=>({key:k,def,current:streaks[k]?.current||0})).filter(s=>s.current>0).sort((a,b)=>b.current-a.current).slice(0,3);
 
@@ -714,8 +854,11 @@ function HomeTab({totalEarned,progress,earnedBadges,schoolLogs,bedtimeLogs,schoo
       <div style={{textAlign:"center",paddingTop:40,paddingBottom:12}}>
         <div style={{fontSize:68,lineHeight:1,animation:"floatY 3s ease-in-out infinite"}}>{icon}</div>
         <h1 style={{fontFamily:"'Fredoka One',cursive",fontSize:32,margin:"10px 0 4px",background:"linear-gradient(90deg,#ffd93d,#ff6b9d,#6bcb77,#4d96ff)",backgroundSize:"200% auto",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",animation:"shimmer 4s linear infinite"}}>NOACH'S SWITCH 2</h1>
-        <p style={{fontSize:12,opacity:.45,margin:0,fontWeight:700}}>Earn it. Own it. Play it. 🎯</p>
+        <p style={{fontSize:12,opacity:.45,margin:0,fontWeight:700,marginBottom:14}}>Earn it. Own it. Play it. 🎯</p>
       </div>
+
+      {/* EDIT 4: School countdown */}
+      <SchoolCountdown/>
 
       {earnedBadges.length>0&&(
         <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
@@ -867,6 +1010,7 @@ function SchoolTab({schoolLogs,onSave}){
   }
   const total=calcTotal();
 
+  // EDIT 1: Add Gym to teacher dropdown
   const TeacherSelect=({classKey})=>{
     const isWedGym=classKey==="secClass5"&&dayInfo.isWednesday;
     if(isWedGym) return <div style={{fontSize:12,opacity:.55,fontWeight:700}}>🏃 Gym</div>;
@@ -875,6 +1019,7 @@ function SchoolTab({schoolLogs,onSave}){
       <option value="rabbiR">Rabbi Rothberger · 75¢</option>
       <option value="mrsW">Mrs. Welikson · $1.50</option>
       <option value="rabbiI">Rabbi Isaac · $2.00</option>
+      <option value="gym">Gym · 50¢</option>
     </select>);
   };
 
@@ -974,41 +1119,87 @@ function BedtimeTab({bedtimeLogs,onSave}){
 }
 
 // ============================================================
-// BONUS TAB
+// BONUS TAB (EDIT 5: Self Control + EDIT 6: Math HW)
 // ============================================================
 function BonusTab({bonuses,onAdd}){
   const [modal,setModal]=useState(null);
   const [engChapters,setEngChapters]=useState(1);
   const [engRate,setEngRate]=useState(1.00);
+  const [scPeriod,setScPeriod]=useState("");
+  const [scAmount,setScAmount]=useState(1.00);
+  const [scDescription,setScDescription]=useState("");
+  const [mathHwOption,setMathHwOption]=useState("before8");
+
+  const selfControlToday = countSelfControlToday(bonuses);
+  const mathHwToday = countMathHwToday(bonuses);
+  const selfControlAvailable = selfControlToday < 3;
+  const mathHwAvailable = mathHwToday < 1;
+
   async function submit(type){
     const today=getTodayIso();
     if(type==="gemara")  await onAdd({label:"📖 Gemara — Studied Seriously",amount:3.00,date:today,type:"gemara"});
     if(type==="math")    await onAdd({label:"➕ Math Test — Studied Seriously",amount:5.00,date:today,type:"math"});
     if(type==="english") await onAdd({label:`📚 English — ${engChapters} chapter${engChapters>1?"s":""} read`,amount:parseFloat((engChapters*engRate).toFixed(2)),date:today,type:"english"});
+    if(type==="selfControl") {
+      if (!scPeriod) return;
+      const periodLabel = ALL_PERIODS.find(p=>p.key===scPeriod)?.label || scPeriod;
+      const intensityLabel = SELF_CONTROL_OPTIONS.find(o=>o.amount===scAmount)?.label || "";
+      await onAdd({
+        label:`🎯 Self Control — ${periodLabel}`,
+        amount:scAmount,
+        date:today,
+        type:"selfControl",
+        period:scPeriod,
+        description:scDescription,
+        intensity:intensityLabel,
+      });
+      setScPeriod(""); setScAmount(1.00); setScDescription("");
+    }
+    if(type==="mathHw") {
+      const opt = MATH_HW_OPTIONS.find(o=>o.key===mathHwOption);
+      await onAdd({
+        label:`📐 Math HW — ${opt.label}`,
+        amount:opt.amount,
+        date:today,
+        type:"mathHw",
+        timing:mathHwOption,
+      });
+    }
     setModal(null);
   }
+
+  const bonusButtons = [
+    {key:"selfControl",emoji:"🎯",label:"Self Control",sub:`${selfControlToday}/3 today`,amount:"50¢-$3",color:"#10b981",enabled:selfControlAvailable},
+    {key:"mathHw",emoji:"📐",label:"Math HW Done",sub:mathHwToday>0?"Already logged today":"Before 9 PM = $1, before 8 = $2",amount:"$1-$2",color:"#8b5cf6",enabled:mathHwAvailable},
+    {key:"gemara",emoji:"📖",label:"Gemara Test",sub:"Studied seriously",amount:"$3.00",color:"#fbbf24",enabled:true},
+    {key:"math",emoji:"➕",label:"Math Test",sub:"Studied seriously",amount:"$5.00",color:"#6bcb77",enabled:true},
+    {key:"english",emoji:"📚",label:"English Reading",sub:"Per chapter read",amount:"custom",color:"#4d96ff",enabled:true},
+  ];
+
   return(
     <div style={{animation:"up .4s ease both",paddingTop:20}}>
-      <div style={{textAlign:"center",marginBottom:20}}><div style={{fontSize:48}}>⭐</div><div style={{fontFamily:"'Fredoka One',cursive",fontSize:24,marginTop:8}}>Special Bonuses</div><div style={{fontSize:13,opacity:.5,fontWeight:700,marginTop:4}}>Logged by a parent</div></div>
+      <div style={{textAlign:"center",marginBottom:20}}><div style={{fontSize:48}}>⭐</div><div style={{fontFamily:"'Fredoka One',cursive",fontSize:24,marginTop:8}}>Special Bonuses</div><div style={{fontSize:13,opacity:.5,fontWeight:700,marginTop:4}}>Tap to log</div></div>
       <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:24}}>
-        {[{key:"gemara",emoji:"📖",label:"Gemara Test",sub:"Studied seriously",amount:"$3.00",color:"#fbbf24"},
-          {key:"math",emoji:"➕",label:"Math Test",sub:"Studied seriously",amount:"$5.00",color:"#6bcb77"},
-          {key:"english",emoji:"📚",label:"English Reading",sub:"Per chapter read",amount:"custom",color:"#4d96ff"}].map(b=>(
-          <button key={b.key} className="tap" onClick={()=>setModal(b.key)} style={{background:`${b.color}12`,border:`1px solid ${b.color}30`,borderRadius:16,padding:"16px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",color:"#fff"}}>
+        {bonusButtons.map(b=>(
+          <button key={b.key} className="tap" onClick={()=>b.enabled&&setModal(b.key)} disabled={!b.enabled} style={{background:`${b.color}12`,border:`1px solid ${b.color}30`,borderRadius:16,padding:"16px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",color:"#fff",opacity:b.enabled?1:0.4,cursor:b.enabled?"pointer":"not-allowed"}}>
             <div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:30}}>{b.emoji}</span><div style={{textAlign:"left"}}><div style={{fontWeight:900,fontSize:15}}>{b.label}</div><div style={{fontSize:12,opacity:.55,marginTop:2,fontWeight:700}}>{b.sub}</div></div></div>
             <div style={{fontFamily:"'Fredoka One',cursive",fontSize:18,color:b.color}}>{b.amount}</div>
           </button>
         ))}
       </div>
       {bonuses.length>0&&(<><div style={{fontSize:11,opacity:.5,fontWeight:900,marginBottom:10,letterSpacing:.5}}>HISTORY</div>
-        {[...bonuses].reverse().map(b=>(<div key={b.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"12px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontWeight:800,fontSize:13}}>{b.label}</div>{b.date&&<div style={{fontSize:11,opacity:.45,fontWeight:700,marginTop:2}}>{formatDate(b.date)}</div>}</div>
-          <span style={{fontFamily:"'Fredoka One',cursive",fontSize:18,color:"#fbbf24"}}>${b.amount.toFixed(2)}</span>
+        {[...bonuses].reverse().map(b=>(<div key={b.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"12px 14px",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13}}>{b.label}</div>{b.date&&<div style={{fontSize:11,opacity:.45,fontWeight:700,marginTop:2}}>{formatDate(b.date)}{b.intensity&&` · ${b.intensity}`}</div>}</div>
+            <span style={{fontFamily:"'Fredoka One',cursive",fontSize:18,color:"#fbbf24"}}>${b.amount.toFixed(2)}</span>
+          </div>
+          {b.description&&<div style={{fontSize:11,opacity:.7,marginTop:6,fontStyle:"italic"}}>"{b.description}"</div>}
         </div>))}</>)}
       {modal&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setModal(null)}>
-          <div style={{background:"#1a1040",border:"1px solid rgba(255,255,255,.15)",borderRadius:20,padding:24,width:"100%",maxWidth:340}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontFamily:"'Fredoka One',cursive",fontSize:22,marginBottom:16,textAlign:"center"}}>{modal==="english"?"📚 English Reading":modal==="math"?"➕ Math Bonus":"📖 Gemara Bonus"}</div>
+          <div style={{background:"#1a1040",border:"1px solid rgba(255,255,255,.15)",borderRadius:20,padding:24,width:"100%",maxWidth:340,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontFamily:"'Fredoka One',cursive",fontSize:22,marginBottom:16,textAlign:"center"}}>{modal==="english"?"📚 English Reading":modal==="math"?"➕ Math Bonus":modal==="gemara"?"📖 Gemara Bonus":modal==="selfControl"?"🎯 Self Control Win":"📐 Math Homework"}</div>
+
             {modal==="english"?(
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:900,opacity:.6,marginBottom:8}}>CHAPTERS READ</div>
@@ -1022,8 +1213,44 @@ function BonusTab({bonuses,onAdd}){
                 </div>
                 <div style={{fontFamily:"'Fredoka One',cursive",fontSize:20,color:"#fbbf24",textAlign:"center"}}>Total: ${(engChapters*engRate).toFixed(2)}</div>
               </div>
+            ):modal==="selfControl"?(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:900,opacity:.6,marginBottom:8}}>WHEN DID IT HAPPEN?</div>
+                <select value={scPeriod} onChange={e=>setScPeriod(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.2)",color:"#fff",fontSize:13,fontFamily:"'Nunito',sans-serif",fontWeight:700,outline:"none",marginBottom:14}}>
+                  <option value="">— Select period —</option>
+                  {ALL_PERIODS.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
+                </select>
+
+                <div style={{fontSize:12,fontWeight:900,opacity:.6,marginBottom:8}}>HOW MUCH SELF-CONTROL?</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+                  {SELF_CONTROL_OPTIONS.map(o=>(
+                    <button key={o.amount} className="tap" onClick={()=>setScAmount(o.amount)} style={{padding:"10px 14px",borderRadius:10,border:`2px solid ${scAmount===o.amount?"#10b981":"rgba(255,255,255,.15)"}`,background:scAmount===o.amount?"rgba(16,185,129,.15)":"rgba(255,255,255,.05)",color:"#fff",fontWeight:800,fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center",textAlign:"left"}}>
+                      <span>{o.label}</span>
+                      <span style={{fontFamily:"'Fredoka One',cursive",fontSize:16,color:scAmount===o.amount?"#10b981":"rgba(255,255,255,.5)"}}>${o.amount.toFixed(2)}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{fontSize:12,fontWeight:900,opacity:.6,marginBottom:8}}>WHAT HAPPENED?</div>
+                <textarea value={scDescription} onChange={e=>setScDescription(e.target.value)} placeholder="Describe the moment..." rows={3} style={{width:"100%",padding:"10px 12px",borderRadius:10,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:13,fontWeight:600,outline:"none",lineHeight:1.4,marginBottom:8}}/>
+              </div>
+            ):modal==="mathHw"?(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:900,opacity:.6,marginBottom:10}}>WHAT TIME WAS IT FINISHED?</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {MATH_HW_OPTIONS.map(o=>(
+                    <button key={o.key} className="tap" onClick={()=>setMathHwOption(o.key)} style={{padding:"14px 16px",borderRadius:12,border:`2px solid ${mathHwOption===o.key?"#8b5cf6":"rgba(255,255,255,.15)"}`,background:mathHwOption===o.key?"rgba(139,92,246,.15)":"rgba(255,255,255,.05)",color:"#fff",fontWeight:800,fontSize:14,display:"flex",justifyContent:"space-between",alignItems:"center",textAlign:"left"}}>
+                      <span>{o.label}</span>
+                      <span style={{fontFamily:"'Fredoka One',cursive",fontSize:18,color:mathHwOption===o.key?"#8b5cf6":"rgba(255,255,255,.5)"}}>+${o.amount.toFixed(2)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ):(<div style={{textAlign:"center",fontFamily:"'Fredoka One',cursive",fontSize:44,color:"#ffd93d",marginBottom:16}}>${modal==="gemara"?"3.00":"5.00"}</div>)}
-            <button className="tap" onClick={()=>submit(modal)} style={{width:"100%",padding:"14px",borderRadius:14,background:"linear-gradient(135deg,#fbbf24,#f59e0b)",color:"#1a1a2e",fontFamily:"'Fredoka One',cursive",fontSize:18,marginBottom:8}}>✅ Add Bonus!</button>
+
+            <button className="tap" onClick={()=>submit(modal)} disabled={modal==="selfControl"&&!scPeriod} style={{width:"100%",padding:"14px",borderRadius:14,background:modal==="selfControl"&&!scPeriod?"rgba(255,255,255,.1)":"linear-gradient(135deg,#fbbf24,#f59e0b)",color:modal==="selfControl"&&!scPeriod?"rgba(255,255,255,.4)":"#1a1a2e",fontFamily:"'Fredoka One',cursive",fontSize:18,marginBottom:8,cursor:modal==="selfControl"&&!scPeriod?"not-allowed":"pointer"}}>
+              {modal==="selfControl"&&!scPeriod?"Pick a period first":"✅ Add Bonus!"}
+            </button>
             <button className="tap" onClick={()=>setModal(null)} style={{width:"100%",padding:"10px",borderRadius:14,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.45)",fontFamily:"'Fredoka One',cursive",fontSize:14}}>Cancel</button>
           </div>
         </div>
@@ -1035,9 +1262,9 @@ function BonusTab({bonuses,onAdd}){
 // ============================================================
 // STREAK CARD
 // ============================================================
-function StreakCard({streakKey,def,s,streakBonuses,hatTrickMode=false,hatTrickCount=0,hatTrickDays=[]}){
-  const current=hatTrickMode?hatTrickCount:(s?.current||0);
-  const best=hatTrickMode?hatTrickCount:(s?.best||0);
+function StreakCard({streakKey,def,s,streakBonuses,hatTrickMode=false,hatTrickCount=0,hatTrickDays=[],customCurrent=null}){
+  const current=customCurrent!=null?customCurrent:(hatTrickMode?hatTrickCount:(s?.current||0));
+  const best=customCurrent!=null?customCurrent:(hatTrickMode?hatTrickCount:(s?.best||0));
   const nextM=def.milestones.find(m=>current<m.n);
   const prevM=def.milestones.filter(m=>current>=m.n).pop()||null;
   const earnedBadgesArr=def.milestones.filter(m=>best>=m.n);
@@ -1074,23 +1301,27 @@ function StreakCard({streakKey,def,s,streakBonuses,hatTrickMode=false,hatTrickCo
           <div style={{fontFamily:"'Fredoka One',cursive",fontSize:16,color:def.color}}>🏆 All milestones complete!</div>
         </div>
       )}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      {customCurrent==null&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{fontSize:11,opacity:.45,fontWeight:800}}>BEST EVER</div>
         <div style={{fontFamily:"'Fredoka One',cursive",fontSize:16,color:"#ffd93d"}}>{best} ⭐</div>
-      </div>
+      </div>}
       {hatTrickMode&&hatTrickDays.length>0&&(<div style={{marginTop:8,fontSize:11,opacity:.4,fontWeight:700}}>Days: {hatTrickDays.map(d=>formatDate(d).split(",")[0]).join(", ")}</div>)}
     </div>
   );
 }
 
 // ============================================================
-// TROPHIES TAB
+// TROPHIES TAB (EDIT 7+8: Self Control + Major Willpower)
 // ============================================================
-function TrophiesTab({streaks,hatTrickCount,hatTrickDays,streakBonuses,schoolLogs,badgeAlbum}){
+function TrophiesTab({streaks,hatTrickCount,hatTrickDays,streakBonuses,schoolLogs,badgeAlbum,bonuses}){
   const dayTotals=Object.values(schoolLogs).map(l=>l.total||0);
   const bestDay=dayTotals.length?Math.max(...dayTotals):0;
   const bestWeek=(()=>{const weeks={};Object.entries(schoolLogs).forEach(([date,log])=>{const d=parseLocal(date);const ws=new Date(d);ws.setDate(d.getDate()-d.getDay());const wk=toLocalIso(ws);weeks[wk]=(weeks[wk]||0)+(log.total||0);});return Object.values(weeks).length?Math.max(...Object.values(weeks)):0;})();
   const SH=({label})=><div style={{fontSize:11,opacity:.5,fontWeight:900,marginBottom:12,letterSpacing:.5}}>{label}</div>;
+
+  const selfControlCount = countSelfControl(bonuses||[]);
+  const majorWillpowerCount = countMajorWillpower(bonuses||[]);
+
   return(
     <div style={{animation:"up .4s ease both",paddingTop:20}}>
       <div style={{textAlign:"center",marginBottom:20}}><div style={{fontSize:48}}>🏆</div><div style={{fontFamily:"'Fredoka One',cursive",fontSize:24,marginTop:8}}>Trophies & Streaks</div><div style={{fontSize:13,opacity:.5,fontWeight:700,marginTop:4}}>Noach's hall of fame</div></div>
@@ -1110,6 +1341,12 @@ function TrophiesTab({streaks,hatTrickCount,hatTrickDays,streakBonuses,schoolLog
       {["jewishClass1","jewishClass2","jewishClass3","rabbiI","mrsW"].map(key=>(<StreakCard key={key} streakKey={key} def={STREAK_DEFS[key]} s={streaks[key]||{current:0,best:0}} streakBonuses={streakBonuses}/>))}
       <SH label="👑 HAT TRICK"/>
       <StreakCard streakKey="hatTrick" def={HAT_TRICK_DEF} s={null} streakBonuses={streakBonuses} hatTrickMode={true} hatTrickCount={hatTrickCount} hatTrickDays={hatTrickDays}/>
+
+      {/* EDIT 7+8: Self Control + Major Willpower collections */}
+      <SH label="🎯 SELF CONTROL COLLECTIONS"/>
+      <StreakCard streakKey="selfControl" def={SELF_CONTROL_DEF} s={null} streakBonuses={streakBonuses} customCurrent={selfControlCount}/>
+      <StreakCard streakKey="majorWillpower" def={MAJOR_WILLPOWER_DEF} s={null} streakBonuses={streakBonuses} customCurrent={majorWillpowerCount}/>
+
       <SH label="✨ FUN STREAKS"/>
       {["recess1","recess2","berger","rabbiR"].map(key=>(<StreakCard key={key} streakKey={key} def={STREAK_DEFS[key]} s={streaks[key]||{current:0,best:0}} streakBonuses={streakBonuses}/>))}
 
